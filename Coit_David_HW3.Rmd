@@ -1,0 +1,195 @@
+---
+title: "Machine Learning HW #3"
+author: "David Coit"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+library(caret)
+library(ROCR)
+library(pROC)
+library(MASS)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(ggfortify)
+library(glmnet)
+library(tidyverse)
+library(LogicReg)
+library(mlbench)
+library(LiblineaR)
+library(party)
+```
+
+
+
+# Homework
+## Lasso
+
+2. Create and train model 
+```{r}
+train_size <- floor(0.75 * nrow(airquality))
+set.seed(543)
+train_pos <- sample(seq_len(nrow(airquality)), size = train_size)
+train_regression <- airquality[train_pos,-c(1,2)]
+test_regression <- airquality[-train_pos,-c(1,2)]
+
+ctrl = trainControl
+
+lasso_regression <- train(Temp ~ ., 
+                          data = train_regression,
+                          method = 'lasso')
+
+
+```
+
+
+Examine the residuals 
+```{r}
+
+# plot the predicted values vs the observed values
+# for the training set
+ggplot(data = train_regression) + 
+  # Plot scatter of predicted vs. true temperatures
+  geom_point(aes(x=Temp, y=predict(lasso_regression, newdata = train_regression))) +
+  # Plot smooth trend line of predicted v. true temp
+  geom_smooth(aes(x=Temp, y=predict(lasso_regression, newdata = train_regression), color = 'r')) + 
+  # Plot identity function as reference
+  geom_smooth(aes(x=Temp, y=Temp)) + 
+  theme_bw() +
+  xlim(55,95) +
+  ylim(55,95) +
+  xlab("Actual Temperature") +
+  ylab("Predicted Temperature") +
+  ggtitle("Predicted Temperature vs. Actual Temperature, Training Data") + 
+  theme(legend.position = 'none')
+
+
+# training data residuals
+res <- residuals(lasso_regression)
+hist(res, breaks = 20)
+summary(res)
+shapiro.test(res)
+```
+
+
+```{r}
+# plot the predicted values vs the observed values
+# for the testing set
+ggplot(data = test_regression) + 
+  # Plot scatter of predicted vs. true temperatures
+  geom_point(aes(x=Temp, y=predict(lasso_regression, newdata = test_regression))) +
+  # Plot smooth trend line of predicted v. true temp
+  geom_smooth(aes(x=Temp, y=predict(lasso_regression, newdata = test_regression), color = 'r')) + 
+  # Plot identity function as reference
+  geom_smooth(aes(x=Temp, y=Temp)) + 
+  theme_bw() +
+  xlim(55,95) +
+  ylim(55,95) +
+  xlab("Actual Temperature") +
+  ylab("Predicted Temperature") +
+  ggtitle("Predicted Temperature vs. Actual Temperature, Test Data") + 
+  theme(legend.position = 'none')
+
+# testing data residuals
+test_observed = test_regression$Temp
+test_predicted = predict(lasso_regression, newdata = test_regression)
+res = test_observed - test_predicted
+hist(res, breaks = 20)
+summary(res)
+shapiro.test(res)
+
+```
+**When using the training data, the lasso regression mean residual value is 0, with a small median value of as well. The residuals also appear to follow a normal distribution. The test data also has a mean and median close to zero. While the residuals don't appear to be normally distributed at first glance, a Shapiro-Wilk normality test p-value of ~0.09 is not indicative of significant probability non-normality. **
+\  
+
+\  
+
+
+1. Use the Breast Cancer dataset from the mlbench package, and predict whether the cancer is malignant or benign using one of the algorithms we learned about in class. Give some rationale as to why you chose this algorithm. Plot ROC curves, and confusion matrices. If you are choosing a hyperparameter like K or lambda, explain how and why you chose it. 
+
+```{r}
+
+# Import and format data
+data(BreastCancer)
+# Drop ID column
+BreastCancer = subset(BreastCancer, select = -c(1))
+# Set "Class" as a factor, other columns as numerical values
+BreastCancer[["Class"]] = factor(BreastCancer[["Class"]])
+cols = c(1,2,3,4,5,6,7,8,9);    
+BreastCancer[,cols] = apply(BreastCancer[,cols], 2, function(x) as.numeric(as.character(x)))
+# Drop any rows containg NA values
+BreastCancer = na.omit(BreastCancer)
+# Set random seed
+set.seed(314)
+
+# test data split
+train_size <- floor(0.75 * nrow(BreastCancer))
+train_index <- sample(seq_len(nrow(BreastCancer)),
+                      size = train_size)
+train_data <- BreastCancer[train_index,]
+test_data <- BreastCancer[-train_index,]
+
+# model train control parameters
+ctrl <- trainControl(method = "LOOCV", 
+                     classProbs = T,
+                     savePredictions = T)
+
+#train model
+bayesGLM <- train(Class ~ .,
+             method = 'bayesglm',
+             data = train_data,
+             trControl = ctrl,
+             family = "binomial",
+             na.action = na.pass)
+
+bayesGLM
+```
+**I chose the Bayes GLM regression in part because I have never worked with Bayesian models before, and I wanted to use this assignment as a way to experiment with one. I admit that although the Bayes model allows us to supply values for the prior assumptions about the data, I am not sure how this applies with a logistic regression. Finally, in my experimentation, this model had high accuracy and ran quickly on my machine (compared to random forest with LOOCV eg.)**
+
+
+```{r}
+
+#ROC curve
+plot(x = roc(predictor = bayesGLM$pred$malignant,
+             response = bayesGLM$pred$obs)$specificities,
+     y = roc(predictor = bayesGLM$pred$malignant,
+             response = bayesGLM$pred$obs)$sensitivities,
+     col= "blue", xlim = c(1, 0), type ="l", ylab = "Sensitivity",
+     xlab = "Specificity")
+
+legend("bottomright", 
+       legend = paste("Breast Cancer Classification AUC: ", 
+                                     roc(predictor = bayesGLM$pred$malignant,
+                                         response = bayesGLM$pred$obs)$auc, sep = ""), 
+       col = c("blue"), 
+       fill = c("blue"))
+
+title("Bayes GLM Classification of Breast Cancer ROC")
+
+```
+
+
+```{r}
+# Confusion matrix
+
+bayesGLM_predict <- predict(bayesGLM, 
+                            newdata = test_data)
+
+cm <- confusionMatrix(bayesGLM_predict, 
+                reference = test_data$Class)
+cm
+cm$byClass["F1"]
+
+```
+
+**Both the accuracy and the F1 score for this model are high, with values of 0.95 and 0.96 respectively.**
+
+
+
+
+
+
